@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "watchcodes-sourcesentinel"
+version = "0.1.0"
+description = "SourceSentinel: upstream monitoring and update reports."
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4.21,<5"]
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<9"]
+[tool.setuptools]
+packages = ["sourcesentinel"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
