@@ -18,6 +18,21 @@ from .sentinel import build_upstream_report
 # scheduler. Every git invocation is bounded and non-interactive.
 DEFAULT_COMMAND_TIMEOUT = 120
 
+# Git honours these ahead of ``-C``/cwd, so an inherited scheduler variable
+# could redirect every read to a different repository while evidence still
+# names the intended clone_dir. The explicit cwd must be authoritative.
+GIT_REPO_LOCATION_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_GRAFT_FILE",
+    "GIT_SHALLOW_FILE",
+)
+
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _REPO_REF_RE = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]{1,100}$")
 _NOT_FOUND_RE = re.compile(r"repository '[^']+' not found", re.IGNORECASE)
@@ -80,6 +95,8 @@ def _run(
     timeout: int = DEFAULT_COMMAND_TIMEOUT,
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    for key in GIT_REPO_LOCATION_ENV:
+        env.pop(key, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         cp = subprocess.run(
