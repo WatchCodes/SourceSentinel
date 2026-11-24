@@ -6,12 +6,17 @@ when local_only=True.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from .sentinel import build_upstream_report
+
+# A hung remote or an interactive credential prompt must never wedge a
+# scheduler. Every git invocation is bounded and non-interactive.
+DEFAULT_COMMAND_TIMEOUT = 120
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _REPO_REF_RE = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]{1,100}$")
@@ -30,9 +35,19 @@ def _run(
     cwd: str | Path | None = None,
     *,
     check: bool = True,
+    timeout: int = DEFAULT_COMMAND_TIMEOUT,
 ) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
-        cp = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=False)
+        cp = subprocess.run(
+            cmd, cwd=cwd, text=True, capture_output=True, check=False,
+            timeout=timeout, env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DriftCommandError(
+            f"command timed out after {timeout}s: {' '.join(cmd)}"
+        ) from exc
     except OSError as exc:
         raise DriftCommandError(f"failed to execute {' '.join(cmd)}: {exc}") from exc
     if check and cp.returncode != 0:

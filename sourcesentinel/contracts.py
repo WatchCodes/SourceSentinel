@@ -45,9 +45,11 @@ def _resolve_schemas_dir() -> Path:
         return p.resolve()
 
     here = Path(__file__).resolve().parent
+    # Prefer schemas shipped with the package so an installed wheel validates
+    # the same contracts as CI, independent of a sibling checkout.
     candidates = [
+        here / "schemas",
         here.parent.parent / "CodeFoundry" / "schemas",
-        here.parent / "schemas",
     ]
     for candidate in candidates:
         if candidate.is_dir():
