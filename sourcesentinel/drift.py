@@ -20,6 +20,32 @@ DEFAULT_COMMAND_TIMEOUT = 120
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _REPO_REF_RE = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]{1,100}$")
+_NOT_FOUND_RE = re.compile(r"repository '[^']+' not found", re.IGNORECASE)
+# Absence is only inferred from narrow git diagnostics. Everything else —
+# especially auth, permission, rate limit and DNS failures — must stay an
+# error: a 404 caused by a revoked token is not proof the upstream vanished.
+_ABSENCE_MARKERS = (
+    "repository not found",
+    "does not appear to be a git repository",
+    "not a git repository",
+)
+_AMBIGUOUS_MARKERS = (
+    "authentication",
+    "authorization",
+    "could not read username",
+    "credential",
+    "permission",
+    "denied",
+    "forbidden",
+    "rate limit",
+    "could not resolve host",
+    "timed out",
+    "timeout",
+    "temporary failure",
+    "ssl",
+    "certificate",
+    "proxy",
+)
 
 
 class DriftDetectionError(ValueError):
@@ -28,6 +54,22 @@ class DriftDetectionError(ValueError):
 
 class DriftCommandError(RuntimeError):
     """Raised when a required git command fails."""
+
+
+class _UpstreamMissing(DriftDetectionError):
+    """Internal signal: remote resolution proved the upstream is absent."""
+
+
+def _is_proven_missing(exc: DriftCommandError) -> bool:
+    """Classify only narrow git diagnostics as proof of upstream absence.
+
+    A 404 caused by a revoked credential or a masked private repo is not proof
+    the upstream vanished, so any ambiguity marker wins over the absence text.
+    """
+    detail = str(exc).lower()
+    if any(marker in detail for marker in _AMBIGUOUS_MARKERS):
+        return False
+    return any(marker in detail for marker in _ABSENCE_MARKERS) or bool(_NOT_FOUND_RE.search(detail))
 
 
 def _run(
@@ -201,7 +243,47 @@ def _resolve_head(
             )
         resolved = cp.stdout.strip()
         return _validate_sha("head_sha", resolved)
-    return ls_remote_head(upstream_url, ref)
+    try:
+        return ls_remote_head(upstream_url, ref)
+    except DriftCommandError as exc:
+        if _is_proven_missing(exc):
+            raise _UpstreamMissing("upstream remote not found") from exc
+        raise
+
+
+def _missing_result(
+    *,
+    repo_ref: str,
+    upstream_ref: str,
+    upstream_url: str,
+    base: str,
+    ref: str,
+    detected_at: str | None,
+    local_only: bool,
+) -> dict[str, Any]:
+    """Emit a deterministic report for a proven-absent upstream."""
+    report = build_upstream_report(
+        repo=repo_ref,
+        upstream=upstream_ref,
+        upstream_sha=base,
+        behind_by=0,
+        detected_at=detected_at,
+        upstream_state="missing",
+    )
+    evidence = {
+        "mapping_repo": repo_ref,
+        "upstream": upstream_ref,
+        "upstream_url": upstream_url,
+        "mapped_upstream_sha": base,
+        "observed_upstream_sha": base,
+        "ref": ref,
+        "behind_by": 0,
+        "upstream_state": "missing",
+        "relation": "missing",
+        "changed_file_count": 0,
+        "local_only": local_only,
+    }
+    return {"report": report, "changed_files": [], "evidence": evidence}
 
 
 def detect_drift(
@@ -240,13 +322,24 @@ def detect_drift(
         else:
             _run(["git", "fetch", "--all", "--prune"], cwd=clone_path)
 
-    head = _resolve_head(
-        upstream_url=upstream_url_text,
-        ref=resolved_ref,
-        head_sha=head_sha,
-        local_only=local_only,
-        clone_dir=clone_path,
-    )
+    try:
+        head = _resolve_head(
+            upstream_url=upstream_url_text,
+            ref=resolved_ref,
+            head_sha=head_sha,
+            local_only=local_only,
+            clone_dir=clone_path,
+        )
+    except _UpstreamMissing:
+        return _missing_result(
+            repo_ref=repo_ref,
+            upstream_ref=upstream_ref,
+            upstream_url=upstream_url_text,
+            base=base,
+            ref=resolved_ref,
+            detected_at=detected_at,
+            local_only=local_only,
+        )
 
     if not local_only:
         # Ensure both objects are available locally for deterministic comparison.
