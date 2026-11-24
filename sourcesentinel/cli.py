@@ -78,6 +78,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             mapped_upstream_sha=args.mapped_sha,
             clone_dir=args.clone_dir,
             ref=args.ref,
+            detected_at=args.detected_at,
+            head_sha=args.head_sha,
+            local_only=args.local_only,
+            dry_run=args.dry_run,
         )
     except Exception as e:
         _emit_error(f"{type(e).__name__}: {e}", as_json=args.json)
@@ -113,6 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--mapped-sha", required=True, help="Mapped upstream SHA currently shipped.")
     p_scan.add_argument("--clone-dir", required=True, help="Local clone/cache directory.")
     p_scan.add_argument("--ref", default="HEAD", help="Upstream ref to check (default: HEAD).")
+    p_scan.add_argument("--detected-at", default=None, help="ISO-8601 detection timestamp for the emitted report.")
+    p_scan.add_argument("--head-sha", default=None, help="Pin the observed upstream SHA (40 hex); skips remote resolution.")
+    p_scan.add_argument("--local-only", action="store_true", default=False, help="Resolve drift from the local clone only; never call the network.")
+    p_scan.add_argument("--dry-run", action="store_true", default=False, help="Alias for --local-only: forbid clone/fetch/ls-remote side effects.")
     p_scan.add_argument("--json", action="store_true", default=False, help="Emit JSON errors.")
     p_scan.set_defaults(func=_cmd_scan)
 
